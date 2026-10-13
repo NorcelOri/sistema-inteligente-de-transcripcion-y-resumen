@@ -28,19 +28,24 @@ def cargar_whisper(modelo="small", device=None):
     return _cache["modelo"]
 
 
-def _rutas_cache(ruta_wav, modelo):
+def _rutas_cache(ruta_wav, modelo, con_prompt=False):
     """Rutas del .txt (texto plano) y .json (texto + segmentos) de una transcripción."""
-    base = CARPETA_TRANSCRIPCIONES / f"{Path(ruta_wav).stem}_{modelo}"
+    sufijo = "_prompt" if con_prompt else ""
+    base = CARPETA_TRANSCRIPCIONES / f"{Path(ruta_wav).stem}_{modelo}{sufijo}"
     return base.with_suffix(".txt"), base.with_suffix(".json")
 
 
-def transcribir(ruta_wav, idioma="es", modelo="small", usar_cache=True) -> dict:
+def transcribir(ruta_wav, idioma="es", modelo="small", usar_cache=True,
+                initial_prompt=None) -> dict:
     """Transcribe un WAV y devuelve:
 
     {"texto": str, "segmentos": [{"inicio", "fin", "texto"}, ...],
      "idioma": str, "modelo": str}
+
+    initial_prompt: texto opcional (p. ej. nombres propios) que orienta la
+    escritura de Whisper.
     """
-    ruta_txt, ruta_json = _rutas_cache(ruta_wav, modelo)
+    ruta_txt, ruta_json = _rutas_cache(ruta_wav, modelo, bool(initial_prompt))
 
     # Si ya se transcribió antes con este modelo, reutilizar
     if usar_cache and ruta_json.exists():
@@ -48,7 +53,8 @@ def transcribir(ruta_wav, idioma="es", modelo="small", usar_cache=True) -> dict:
 
     modelo_whisper = cargar_whisper(modelo)
     en_gpu = modelo_whisper.device.type == "cuda"
-    salida = modelo_whisper.transcribe(str(ruta_wav), language=idioma, fp16=en_gpu)
+    salida = modelo_whisper.transcribe(str(ruta_wav), language=idioma, fp16=en_gpu,
+                                       initial_prompt=initial_prompt)
 
     resultado = {
         "texto": salida["text"].strip(),
