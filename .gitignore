@@ -1,0 +1,31 @@
+# --- Datos privados (voces y contenido de reuniones reales) ---
+# No subir nunca: solo hay consentimiento para uso académico.
+data/**
+!data/*/
+!data/**/.gitkeep
+data/video/
+data/videos/
+
+# Archivos generados
+resultados/*
+!resultados/.gitkeep
+*.wav
+*.mp3
+*.mp4
+*.m4a
+
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Entornos virtuales (el oficial está fuera del proyecto: C:\venvs\nlp-audio)
+venv/
+.venv/
+env/
+
+# Editores / sistema
+.vscode/
+.idea/
+desktop.ini
+Thumbs.db
