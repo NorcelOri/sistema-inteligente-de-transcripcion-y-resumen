@@ -10,7 +10,7 @@ from collections import Counter
 
 from rapidfuzz import fuzz
 
-from src.texto import _cargar_spacy, _es_palabra_comun
+from src.texto import RANGO_VOCABULARIO, _cargar_spacy, _es_palabra_comun
 
 TIPOS_ENTIDAD = ("PER", "LOC", "ORG")
 
@@ -238,13 +238,34 @@ def _stopwords_es() -> list:
     return sorted(STOP_WORDS)
 
 
-def _sintagmas_nominales(texto: str) -> list:
+# Palabras de discurso (cortesía, relleno) que no son temas aunque sean sustantivos
+PALABRAS_DISCURSO = {
+    "gracias", "disculpa", "disculpas", "perdón", "saludo", "saludos", "hola", "gusto",
+    "momento", "vez", "veces", "favor", "cosa", "cosas", "forma", "manera", "parte",
+    "caso", "verdad", "ejemplo", "minuto", "minutos", "poco", "algo", "nada", "tipo",
+}
+
+
+def _aceptable(tok, terminos_glosario) -> bool:
+    """Token válido para una palabra clave: PROPN, término del glosario o palabra
+    del vocabulario español (se descartan errores de transcripción como "compreendlo")."""
+    if tok.pos_ == "PROPN" or tok.lower_ in terminos_glosario:
+        return True
+    return _es_palabra_comun(tok.lower_, RANGO_VOCABULARIO) or _es_palabra_comun(tok.lemma_, RANGO_VOCABULARIO)
+
+
+def _sintagmas_nominales(texto: str, glosario=None, minimo: int = 2, texto_ref: str = None) -> list:
     """Candidatas: sintagmas nominales de spaCy, de 1 a 2 palabras.
 
     Se quitan por delante determinantes, preposiciones, pronombres y números
     ("la reunión" -> "reunión"); las de más de 2 palabras se acortan a su
-    núcleo y el adjetivo/sustantivo que sigue.
+    núcleo y el adjetivo/sustantivo que sigue. Filtros de ruido: sin palabras
+    de discurso, solo palabras del español, PROPN o del glosario, y al menos
+    `minimo` apariciones en `texto_ref` (por defecto, el propio texto).
     """
+    glosario = list(glosario or [])
+    terminos = {w.lower() for g in glosario for w in g.split()}
+    referencia = texto_ref or texto
     candidatas = set()
     for chunk in _cargar_spacy()(texto).noun_chunks:
         toks = [t for t in chunk if not t.is_punct]
@@ -254,24 +275,36 @@ def _sintagmas_nominales(texto: str) -> list:
             toks.pop()
         if len(toks) > 2:
             toks = toks[:2] if toks[1].pos_ in ("NOUN", "PROPN", "ADJ") else toks[:1]
-        if toks and any(t.pos_ in ("NOUN", "PROPN") for t in toks):
-            frase = " ".join(t.text.lower() for t in toks)
-            if len(frase) > 2 and not all(t.is_stop for t in toks):
-                candidatas.add(frase)
-    return sorted(candidatas)
+        if not toks or not any(t.pos_ in ("NOUN", "PROPN") for t in toks):
+            continue
+        if any(t.lower_ in PALABRAS_DISCURSO or t.lemma_.lower() in PALABRAS_DISCURSO for t in toks):
+            continue
+        if all(t.is_stop for t in toks) or not all(_aceptable(t, terminos) for t in toks):
+            continue
+        frase = " ".join(t.text.lower() for t in toks)
+        if len(frase) > 2:
+            candidatas.add(frase)
+    # Los términos del glosario que aparecen en el texto también son candidatas
+    candidatas |= {g.lower() for g in glosario if re.search(rf"(?<!\w){re.escape(g)}(?!\w)", texto, re.IGNORECASE)}
+    return sorted(c for c in candidatas
+                  if len(re.findall(rf"(?<!\w){re.escape(c)}(?!\w)", referencia, re.IGNORECASE)) >= minimo)
 
 
-def extraer_palabras_clave(texto: str, n: int = 10, candidatas: str = "sintagmas") -> list:
+def extraer_palabras_clave(texto: str, n: int = 10, candidatas: str = "sintagmas",
+                           glosario=None, minimo: int = 2, texto_ref: str = None) -> list:
     """Palabras clave con KeyBERT: [(frase, score), ...] de mayor a menor.
 
     Ngramas (1, 2), MMR con diversidad 0.5 y stopwords en español.
-    `candidatas`: "sintagmas" (por defecto: solo sintagmas nominales de spaCy) o "libres" (ngramas del texto).
+    `candidatas`: "sintagmas" (por defecto: sintagmas nominales de spaCy, con
+    filtros de ruido: mínimo `minimo` apariciones, sin palabras de discurso,
+    solo palabras del español, PROPN o términos del `glosario`) o "libres"
+    (ngramas del texto, sin esos filtros; sirve de comparación).
     """
     if not texto.strip():
         return []
     kb = _keybert()
     if candidatas == "sintagmas":
-        lista = _sintagmas_nominales(texto)
+        lista = _sintagmas_nominales(texto, glosario, minimo, texto_ref)
         if not lista:
             return []
         return kb.extract_keywords(texto, candidates=lista, top_n=n, use_mmr=True,
@@ -306,7 +339,8 @@ def _parecidas(a: str, b: str, umbral=85) -> bool:
     return fuzz.ratio(_clave(a), _clave(b)) >= umbral or pa <= pb or pb <= pa
 
 
-def extraer_temas(texto: str, n: int = 10, por_bloque: int = 8, candidatas: str = "sintagmas") -> list:
+def extraer_temas(texto: str, n: int = 10, por_bloque: int = 8, candidatas: str = "sintagmas",
+                  glosario=None) -> list:
     """Temas principales: [(tema, bloques, score), ...].
 
     Divide el texto en bloques de 300 a 400 palabras, extrae palabras clave de
@@ -315,7 +349,7 @@ def extraer_temas(texto: str, n: int = 10, por_bloque: int = 8, candidatas: str 
     """
     acumulado = {}   # frase -> {"bloques": int, "score": float}
     for bloque in _bloques(texto):
-        for frase, score in extraer_palabras_clave(bloque, por_bloque, candidatas):
+        for frase, score in extraer_palabras_clave(bloque, por_bloque, candidatas, glosario, texto_ref=texto):
             a = acumulado.setdefault(frase, {"bloques": 0, "score": 0.0})
             a["bloques"] += 1
             a["score"] += score

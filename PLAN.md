@@ -189,3 +189,63 @@ Si hay retraso: priorizar que el flujo completo funcione con TextRank antes de p
 ## 10. Primer prompt sugerido
 
 > Lee PLAN.md. Empecemos por el Día 1: crea la estructura de carpetas, el `.gitignore` y `requirements.txt`, e implementa `src/audio.py` y `src/transcripcion.py`. Prueba con un fragmento de 2 minutos de `data/videos/reunion_1` y muéstrame la transcripción.
+
+## 11. Estado y decisiones (actualizado tras el Día 3)
+
+### Hecho
+- **Día 1:** estructura, `src/audio.py`, `src/transcripcion.py` (Whisper), prueba con fragmento de 2 min.
+- **Día 2:** las 3 reuniones transcritas y guardadas; `src/texto.py` (corrección con glosario/variantes, limpieza de muletillas, oraciones); `src/nlp.py` con entidades y fechas; `tests/test_texto.py` (7 tests `unittest`: `python -m unittest`).
+- **Día 3:** `extraer_palabras_clave()` y `extraer_temas()` (KeyBERT, `paraphrase-multilingual-MiniLM-L12-v2`).
+- **Siguiente:** Día 4 (`src/resumen.py`). No iniciado; se espera confirmación.
+
+### Decisiones clave
+- **Whisper `medium` + glosario opcional.** `medium` baja el WER frente a `small`, y el `initial_prompt` con glosario lo baja más. Sin glosario no se usa prompt; el sistema no trae términos por defecto (ejemplo en `config/ejemplos/caso_reuniones/`).
+- **Reparación automática de bucles y huecos** (activa por defecto): re-transcribe solo el tramo con problemas y registra el antes/después en `resultado["reparaciones"]`.
+- **Texto fiel vs. texto limpio.** El *fiel* (nombres corregidos, con muletillas) es la transcripción que se entrega. El *limpio* (sin muletillas) se usa solo para análisis (entidades, fechas, palabras clave, resumen) y nunca se entrega como transcripción.
+- **Entidades:** solo tokens PROPN (se recortan los extremos que no lo son), etiqueta más frecuente, fusión de variantes con rapidfuzz ≥ 90 (aunque la etiqueta difiera), glosario con prioridad (ORG).
+- **Fechas:** absolutas (incluye el día del mes, "el 23") y relativas; se unifican variantes y se descartan las débiles ("el mes", "este año").
+- **Palabras clave: sintagmas nominales de spaCy** como candidatas de KeyBERT (ngramas 1-2, MMR 0.5, stopwords en español), con filtros de ruido: mínimo 2 apariciones, sin palabras de discurso (gracias, momento, vez…), solo palabras del vocabulario español, PROPN o términos del glosario.
+
+### Resultados medidos
+**WER** (fragmento de 2 min de reunion_1, referencia manual `data/referencia/reunion_1_300s_120s_referencia.txt`):
+
+| Configuración | WER | WER sin tildes |
+|---|---|---|
+| small | 15.3 % | 14.8 % |
+| small + glosario | 13.5 % | 13.1 % |
+| medium | 14.4 % | 14.0 % |
+| **medium + glosario** | **12.2 %** | **11.8 %** |
+
+Solo hay un fragmento de referencia (2 min), así que la diferencia entre configuraciones es orientativa.
+
+**Transcripción completa (medium + glosario):**
+
+| Reunión | Audio | Transcripción | Palabras | Reparaciones |
+|---|---|---|---|---|
+| 1 | 30.4 min | 277.7 s | 3657 | 2 |
+| 2 | 23.0 min | 166.4 s | 2145 | 3 |
+| 3 | 18.3 min | 122.3 s | 2297 | 2 |
+
+**Correcciones sobre el texto ya transcrito** (reemplazos de palabra; todas fueron variantes de la sigla del glosario salvo lo indicado):
+
+| Reunión | Variantes | Glosario |
+|---|---|---|
+| 1 | 5 | 10 (Perumeg/Perúmeg→PERUMEC, Asme→ASME) |
+| 2 | 1 | 4 (→PERUMEC) |
+| 3 | 0 | 4 (parter→partners, →PERUMEC) |
+
+**Palabras clave, candidatas libres vs. sintagmas nominales** (mismas 3 reuniones): las libres dan pares verbo+sustantivo sin sentido ("ponente tendríamos", "presentaba presentar", "dijiste reunión"); los sintagmas dan sustantivos reales (ponente, comunicación, formulario, embajadores…). Se eligieron los sintagmas. Tras el filtro de ruido, ejemplo reunion_2: reunión, ponente, comunicación, coordinador, flyer, mañana, partners, marketing, posibilidad.
+
+**Entidades** (top, con glosario): ver CSV de revisión abajo. Con glosario aparecen `partners` y suben ASME/PERUMEC, que spaCy solo no detecta bien. Solo hubo una fusión por similitud (Steve→Steven). Entre las 3 reuniones aparecen decenas de entidades, con errores de etiqueta de spaCy.
+
+### Pendientes (del autor)
+- **Llenar con s/n la columna `correcta`** de `data/referencia/entidades_reunion_1.csv` y `entidades_reunion_3.csv`; luego `evaluar_precision_entidades(csv)` (en `src/evaluacion.py`) da la precisión por tipo. No se versionan (`data/` está ignorado).
+- **Fragmento de referencia de reunion_3:** transcribir a mano 2-3 min para un segundo WER (hoy solo hay de reunion_1).
+- ROUGE: resumen de referencia a mano de un video (Día 6).
+
+### Limitaciones conocidas (se suman a la sección 8)
+- Las palabras clave son sobre todo palabras sueltas (spaCy da pocos bigramas), y aún se cuelan algunas ("hazme") y nombres mal etiquetados por spaCy (p. ej. "cybermeg").
+- El NER de spaCy etiqueta mal algunos nombres (organizaciones como PER/LOC); la fusión y el glosario corrigen solo parte.
+- Las variantes de una misma entidad con similitud < 90 (p. ej. "Cyber Mej" / "Cybermeg") no se unen.
+- La limpieza de muletillas es conservadora: solo borra marcadores claramente aislados.
+- El WER se midió sobre un solo fragmento de 2 min.

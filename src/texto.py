@@ -16,6 +16,7 @@ from rapidfuzz import fuzz
 UMBRAL_LARGO = 85      # términos de 6 o más letras
 UMBRAL_CORTO = 100     # términos de 5 o menos letras: coincidencia exacta
 RANGO_COMUN = 10000    # palabras entre las 10 000 más frecuentes = comunes
+RANGO_VOCABULARIO = 20000   # todo el vocabulario de es_core_news_md (para descartar errores de transcripción)
 _PALABRA = re.compile(r"\w+", re.UNICODE)
 
 _spacy = {}
@@ -27,7 +28,7 @@ def _sin_tildes(s: str) -> str:
     return s.replace("\0", "ñ")
 
 
-def _es_palabra_comun(palabra: str) -> bool:
+def _es_palabra_comun(palabra: str, rango: int = RANGO_COMUN) -> bool:
     """True si es una palabra frecuente del español.
 
     Usa el vocabulario de spaCy, cuyos vectores están ordenados por frecuencia:
@@ -44,7 +45,7 @@ def _es_palabra_comun(palabra: str) -> bool:
     if not nlp:
         return False
     fila = nlp.vocab.vectors.key2row.get(nlp.vocab.strings[palabra.lower()])
-    return fila is not None and fila < RANGO_COMUN
+    return fila is not None and fila < rango
 
 
 def _umbral(termino: str) -> int:
