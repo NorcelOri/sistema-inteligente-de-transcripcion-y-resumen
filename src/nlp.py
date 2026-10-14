@@ -266,7 +266,6 @@ def extraer_palabras_clave(texto: str, n: int = 10, candidatas: str = "sintagmas
 
     Ngramas (1, 2), MMR con diversidad 0.5 y stopwords en español.
     `candidatas`: "sintagmas" (por defecto: solo sintagmas nominales de spaCy) o "libres" (ngramas del texto).
-    nominales de spaCy).
     """
     if not texto.strip():
         return []
