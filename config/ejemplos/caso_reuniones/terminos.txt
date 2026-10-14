@@ -1,0 +1,7 @@
+# Nombres propios y siglas que aparecen en las reuniones (uno por línea).
+# Se escriben tal como deben salir en la transcripción.
+# Con ellos se construye el initial_prompt de Whisper y se normaliza su escritura.
+ASME
+IEEE
+PERUMEC
+partners

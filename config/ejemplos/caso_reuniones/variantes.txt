@@ -1,0 +1,8 @@
+# Variantes mal transcritas -> forma correcta.  Formato:  variante => correcta
+# No distingue mayúsculas. Se pueden usar varias palabras en la variante.
+# Aquí solo van errores observados en las transcripciones reales.
+perumex => PERUMEC
+imperumex => PERUMEC
+perú mej => PERUMEC
+parners => partners
+bajadores => embajadores

@@ -5,7 +5,9 @@ Autor: Cuyo Zamata Yimmy Yeyson. Plazo total: 6 días.
 
 ## 1. Objetivo
 
-Dado un archivo de audio o video de una reunión (.mp3, .wav, .m4a, .mp4), el sistema:
+**Alcance:** el sistema es general: reuniones, clases, videos informativos, de cualquier duración. Los 3 videos de reuniones de la sección 3 son solo material de prueba; ninguna decisión de diseño debe depender de su contenido (nombres, siglas, temas).
+
+Dado un archivo de audio o video (.mp3, .wav, .m4a, .mp4), el sistema:
 1. Extrae y prepara el audio.
 2. Lo transcribe (Whisper).
 3. Limpia el texto (muletillas, normalización, oraciones).
@@ -26,7 +28,7 @@ Todo con **modelos preentrenados**. No se entrena nada.
 - ffmpeg instalado vía winget (disponible en PATH).
 - Los modelos se descargan solos en `C:\Users\User\.cache` la primera vez (mT5 pesa ~2 GB).
 
-## 3. Datos de prueba
+## 3. Datos de prueba (solo para probar; el sistema no depende de ellos)
 
 3 videos de reuniones de Google Meet (español, poco ruido, varios hablantes), con consentimiento de los participantes:
 
@@ -85,8 +87,14 @@ Cada módulo expone funciones simples y testeables. Todas las rutas con `pathlib
 - `transcribir(ruta_wav, idioma="es") -> dict` con texto completo y segmentos con tiempos. Usar `fp16=True` en GPU.
 - Guardar el resultado en `data/transcripciones/<nombre>.txt` y reutilizarlo si ya existe.
 - Probar `small` primero; si el WER es alto, probar `medium` (la GPU alcanza).
+- **Glosario opcional:** `transcribir(..., glosario=[...])`. Lista de términos (nombres propios, siglas) que da el usuario; vacía por defecto. Con ella se construye el `initial_prompt` (`construir_prompt`). Sin glosario no se usa prompt. No hay términos por defecto: el ejemplo del caso de reuniones vive en `config/ejemplos/caso_reuniones/` (`terminos.txt`, `variantes.txt`); `src/config.py` solo lee archivos si se le pasa la ruta.
+- **Reparación automática** (`reparar_transcripcion`, activa por defecto): detecta (a) **bucles**: segmentos consecutivos con el mismo texto (3+ veces, o 2 veces si la frase tiene 3+ palabras) y (b) **huecos**: 8 s o más sin texto con energía de voz en el audio (50 % o más de fotogramas sobre el piso de ruido). Re-transcribe solo ese tramo (con 2 s de margen) con `condition_on_previous_text=False`; si sigue con problemas, un segundo intento sin los descartes `no_speech_threshold` y `logprob_threshold`. Semilla fija para que el resultado sea reproducible. Quita de los bordes los segmentos vecinos cuyo texto ya aparece en el tramo nuevo. Registra cada reparación (antes/después) en `resultado["reparaciones"]`.
+- Los archivos `*_manual*` NO se usan para generar resultados del sistema; solo la transcripción automática con las correcciones del propio programa. Las referencias manuales solo sirven para evaluar (WER).
 
 ### src/texto.py
+- `corregir_nombres(texto, glosario=None, variantes=None)`: dos capas, ambas opcionales:
+  1. `corregir_glosario`: corrección aproximada con `rapidfuzz` contra el glosario del usuario, por palabra o frase (ventanas de k-1, k y k+1 palabras). Conservadora: misma letra inicial, umbral 85 (términos de 6+ letras; siglas y términos cortos solo normalizan mayúsculas), y no toca ventanas con palabras comunes del español (las 10 000 más frecuentes del vocabulario de spaCy).
+  2. `corregir_variantes`: diccionario `variante => correcta` de errores ya vistos (segunda capa, opcional).
 - `limpiar_texto(texto) -> str`:
   - Eliminar muletillas con regex (eh, em, este, o sea, bueno, mmm, ¿no?, etc.), sin romper palabras que las contengan (usar límites de palabra `\b`).
   - Normalizar espacios, signos y mayúsculas iniciales; quitar caracteres innecesarios.
@@ -159,7 +167,10 @@ Si hay retraso: priorizar que el flujo completo funcione con TextRank antes de p
 
 ## 8. Limitaciones a declarar en el informe
 
+- Optimizado para español (modelos, stopwords, spaCy y reglas de limpieza son de español); otros idiomas no están evaluados.
 - No hay diarización: no se distingue quién habla.
+- La reparación de bucles/huecos re-transcribe con Whisper, que no es determinista del todo; el texto recuperado puede tener errores, y los tiempos de los segmentos son aproximados (± varios segundos).
+- La corrección con glosario solo arregla errores cercanos en escritura al término; no recupera palabras que Whisper entendió como otra cosa.
 - mT5 XL-Sum fue entrenado con noticias; en reuniones puede producir resúmenes cortos o genéricos.
 - El NER de spaCy sobre habla transcrita es menos preciso que sobre texto escrito.
 - Los modelos tienen entrada limitada (~512 tokens), por eso se usa map-reduce.
