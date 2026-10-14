@@ -213,3 +213,121 @@ def exportar_entidades_csv(entidades: dict, ruta) -> None:
         for tipo, lista in entidades.items():
             for entidad, n in lista:
                 w.writerow([entidad, tipo, n, ""])
+
+
+# ---------------------------------------------------------------------------
+# Palabras clave y temas (KeyBERT)
+# ---------------------------------------------------------------------------
+
+MODELO_EMBEDDINGS = "paraphrase-multilingual-MiniLM-L12-v2"
+DIVERSIDAD_MMR = 0.5
+_modelos = {}
+
+
+def _keybert():
+    """KeyBERT con el modelo multilingüe; se carga una sola vez."""
+    if "kb" not in _modelos:
+        from keybert import KeyBERT
+        from sentence_transformers import SentenceTransformer
+        _modelos["kb"] = KeyBERT(model=SentenceTransformer(MODELO_EMBEDDINGS))
+    return _modelos["kb"]
+
+
+def _stopwords_es() -> list:
+    from spacy.lang.es.stop_words import STOP_WORDS
+    return sorted(STOP_WORDS)
+
+
+def _sintagmas_nominales(texto: str) -> list:
+    """Candidatas: sintagmas nominales de spaCy, de 1 a 2 palabras.
+
+    Se quitan por delante determinantes, preposiciones, pronombres y números
+    ("la reunión" -> "reunión"); las de más de 2 palabras se acortan a su
+    núcleo y el adjetivo/sustantivo que sigue.
+    """
+    candidatas = set()
+    for chunk in _cargar_spacy()(texto).noun_chunks:
+        toks = [t for t in chunk if not t.is_punct]
+        while toks and toks[0].pos_ not in ("NOUN", "PROPN", "ADJ"):
+            toks.pop(0)
+        while toks and toks[-1].pos_ not in ("NOUN", "PROPN", "ADJ"):
+            toks.pop()
+        if len(toks) > 2:
+            toks = toks[:2] if toks[1].pos_ in ("NOUN", "PROPN", "ADJ") else toks[:1]
+        if toks and any(t.pos_ in ("NOUN", "PROPN") for t in toks):
+            frase = " ".join(t.text.lower() for t in toks)
+            if len(frase) > 2 and not all(t.is_stop for t in toks):
+                candidatas.add(frase)
+    return sorted(candidatas)
+
+
+def extraer_palabras_clave(texto: str, n: int = 10, candidatas: str = "sintagmas") -> list:
+    """Palabras clave con KeyBERT: [(frase, score), ...] de mayor a menor.
+
+    Ngramas (1, 2), MMR con diversidad 0.5 y stopwords en español.
+    `candidatas`: "sintagmas" (por defecto: solo sintagmas nominales de spaCy) o "libres" (ngramas del texto).
+    nominales de spaCy).
+    """
+    if not texto.strip():
+        return []
+    kb = _keybert()
+    if candidatas == "sintagmas":
+        lista = _sintagmas_nominales(texto)
+        if not lista:
+            return []
+        return kb.extract_keywords(texto, candidates=lista, top_n=n, use_mmr=True,
+                                   diversity=DIVERSIDAD_MMR)
+    return kb.extract_keywords(texto, keyphrase_ngram_range=(1, 2), stop_words=_stopwords_es(),
+                               top_n=n, use_mmr=True, diversity=DIVERSIDAD_MMR)
+
+
+def _bloques(texto: str, minimo=300, maximo=400) -> list:
+    """Divide el texto en bloques de 300 a 400 palabras, sin cortar oraciones
+    (una oración muy larga puede pasar de 400)."""
+    from src.texto import segmentar_oraciones
+    bloques, actual, palabras = [], [], 0
+    for oracion in segmentar_oraciones(texto):
+        n = len(oracion.split())
+        if actual and palabras >= minimo or palabras + n > maximo and palabras >= minimo // 2:
+            bloques.append(" ".join(actual))
+            actual, palabras = [], 0
+        actual.append(oracion)
+        palabras += n
+    if actual:
+        if bloques and palabras < minimo // 2:   # resto muy corto: se une al bloque anterior
+            bloques[-1] += " " + " ".join(actual)
+        else:
+            bloques.append(" ".join(actual))
+    return bloques
+
+
+def _parecidas(a: str, b: str, umbral=85) -> bool:
+    """Frases casi iguales: similitud alta, o una contiene a la otra ("plan" / "plan trabajo")."""
+    pa, pb = set(_clave(a).split()), set(_clave(b).split())
+    return fuzz.ratio(_clave(a), _clave(b)) >= umbral or pa <= pb or pb <= pa
+
+
+def extraer_temas(texto: str, n: int = 10, por_bloque: int = 8, candidatas: str = "sintagmas") -> list:
+    """Temas principales: [(tema, bloques, score), ...].
+
+    Divide el texto en bloques de 300 a 400 palabras, extrae palabras clave de
+    cada uno y las agrega: primero por en cuántos bloques aparece, luego por la
+    suma de sus scores. Las frases parecidas se unen en la más frecuente.
+    """
+    acumulado = {}   # frase -> {"bloques": int, "score": float}
+    for bloque in _bloques(texto):
+        for frase, score in extraer_palabras_clave(bloque, por_bloque, candidatas):
+            a = acumulado.setdefault(frase, {"bloques": 0, "score": 0.0})
+            a["bloques"] += 1
+            a["score"] += score
+    orden = sorted(acumulado.items(), key=lambda kv: (-kv[1]["bloques"], -kv[1]["score"]))
+    temas = []
+    for frase, a in orden:
+        for t in temas:
+            if _parecidas(frase, t["tema"]):
+                t["score"] += a["score"]   # se suma al tema ya aceptado (más frecuente)
+                break
+        else:
+            temas.append({"tema": frase, **a})
+    temas.sort(key=lambda t: (-t["bloques"], -t["score"]))
+    return [(t["tema"], t["bloques"], round(t["score"], 3)) for t in temas[:n]]
