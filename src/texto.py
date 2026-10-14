@@ -214,6 +214,10 @@ def limpiar_texto_con_registro(texto: str):
             if (pre in {"", ".", "!", "?", "…"}) and not conj and resto:
                 resto = resto[0].upper() + resto[1:]
             separador = (m.group("pre") or "") if not (m.group("pre") or "").isspace() else " "
+            # "..., digamos. Siguiente" cierra la oración: la coma pasa a punto
+            if pre == "," and not conj and m.group("m").rstrip().endswith(".") and resto:
+                separador = ". "
+                resto = resto[0].upper() + resto[1:]
             texto = texto[:m.start()] + separador + conj + resto
             cambio = True
 

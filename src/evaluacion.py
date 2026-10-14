@@ -52,3 +52,25 @@ def errores(referencia: str, hipotesis: str, quitar_tildes=False) -> list:
         elif alineacion.type == "insert":
             lista += [("inserción", "", b) for b in h]
     return lista
+
+
+def evaluar_precision_entidades(ruta_csv) -> dict:
+    """Precisión de las entidades por tipo, desde el CSV revisado a mano.
+
+    El CSV tiene las columnas entidad, tipo, frecuencia, correcta (s/n).
+    Precisión = entidades marcadas "s" / entidades revisadas, por tipo y en total.
+    Si falta alguna marca, lanza ValueError (el CSV aún no está completo).
+    """
+    import csv
+    with open(ruta_csv, newline="", encoding="utf-8-sig") as f:
+        filas = list(csv.DictReader(f))
+    marcas = {"s": True, "si": True, "sí": True, "n": False, "no": False}
+    vacias = [f["entidad"] for f in filas if f["correcta"].strip().lower() not in marcas]
+    if vacias:
+        raise ValueError(f"Faltan o son inválidas {len(vacias)} marcas (usa s/n): {vacias[:5]}...")
+    resultado = {}
+    for tipo in sorted({f["tipo"] for f in filas}) + ["TOTAL"]:
+        grupo = [marcas[f["correcta"].strip().lower()] for f in filas if tipo in (f["tipo"], "TOTAL")]
+        resultado[tipo] = {"revisadas": len(grupo), "correctas": sum(grupo),
+                           "precision": round(sum(grupo) / len(grupo), 3)}
+    return resultado
