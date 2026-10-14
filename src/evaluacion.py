@@ -2,6 +2,7 @@
 
 import re
 import unicodedata
+from pathlib import Path
 
 import jiwer
 
@@ -54,6 +55,36 @@ def errores(referencia: str, hipotesis: str, quitar_tildes=False) -> list:
     return lista
 
 
+class _Tokenizador:
+    """Tokenizador para rouge-score: minúsculas, sin puntuación, conserva tildes y ñ.
+
+    El de rouge-score por defecto borra todo lo que no sea a-z y 0-9 (rompe
+    "reunión" en "reuni n"). Se reutiliza `normalizar` (con o sin tildes).
+    """
+
+    def __init__(self, quitar_tildes=False):
+        self.quitar_tildes = quitar_tildes
+
+    def tokenize(self, texto):
+        return normalizar(texto, self.quitar_tildes).split()
+
+
+def rouge(referencia: str, resumen: str) -> dict:
+    """ROUGE-1, ROUGE-2 y ROUGE-L (precisión, recall y F1), con y sin tildes.
+
+    Devuelve {"con_tildes": {"rouge1": {"p", "r", "f"}, ...}, "sin_tildes": {...}}.
+    """
+    from rouge_score import rouge_scorer
+    resultado = {}
+    for clave, sin_tildes in (("con_tildes", False), ("sin_tildes", True)):
+        evaluador = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"],
+                                             tokenizer=_Tokenizador(sin_tildes))
+        puntajes = evaluador.score(referencia, resumen)
+        resultado[clave] = {k: {"p": round(v.precision, 3), "r": round(v.recall, 3),
+                                "f": round(v.fmeasure, 3)} for k, v in puntajes.items()}
+    return resultado
+
+
 def evaluar_precision_entidades(ruta_csv) -> dict:
     """Precisión de las entidades por tipo, desde el CSV revisado a mano.
 
@@ -62,8 +93,15 @@ def evaluar_precision_entidades(ruta_csv) -> dict:
     Si falta alguna marca, lanza ValueError (el CSV aún no está completo).
     """
     import csv
-    with open(ruta_csv, newline="", encoding="utf-8-sig") as f:
-        filas = list(csv.DictReader(f))
+    # Excel en español guarda con ";" y a veces en cp1252: se detectan ambos
+    crudo = Path(ruta_csv).read_bytes()
+    try:
+        contenido = crudo.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        contenido = crudo.decode("cp1252")
+    delimitador = ";" if contenido.splitlines()[0].count(";") > contenido.splitlines()[0].count(",") else ","
+    filas = [f for f in csv.DictReader(contenido.splitlines(), delimiter=delimitador)
+             if (f.get("entidad") or "").strip()]
     marcas = {"s": True, "si": True, "sí": True, "n": False, "no": False}
     vacias = [f["entidad"] for f in filas if f["correcta"].strip().lower() not in marcas]
     if vacias:
