@@ -142,3 +142,144 @@ def corregir_nombres(texto, glosario=None, variantes=None) -> str:
     Ambos son opcionales; sin ninguno devuelve el texto igual.
     """
     return corregir_glosario(corregir_variantes(texto, variantes), glosario)
+
+
+# ---------------------------------------------------------------------------
+# Limpieza para análisis
+#
+# Whisper casi nunca transcribe interjecciones puras (eh, em, mmm), pero sí deja
+# marcadores de relleno ("o sea", "bueno", "digamos", "este"). Solo se borran
+# cuando el contexto lo deja claro: aislados entre pausas (comas, puntos, inicio
+# de texto) o repetidos. "bueno" en "me parece bueno", "este" en "este evento"
+# o "pues" en medio de una frase no se tocan.
+# ---------------------------------------------------------------------------
+
+# Interjecciones: se borran siempre (palabra completa).
+_INTERJECCION = re.compile(r"(?<!\w)(?:e+h+m*|e+m+|h?m{2,}|hm+|u+h+m+|u+m+)(?!\w)[,.]?\s*", re.IGNORECASE)
+
+# Marcadores: solo si van aislados por pausas. Los que cierran con coma ("bueno,")
+# o también con punto ("digamos.").
+_MARCADORES_COMA = r"o\s+sea|bueno|pues|este|digamos"
+_MARCADORES_PUNTO = r"digamos|o\s+sea"
+_MARCADOR = re.compile(
+    r"(?P<pre>^|[.!?…]\s+|,\s+|(?<=\w)\s+(?=(?:y|pero)\s))"  # inicio, fin de oración, coma, o tras 'y'/'pero'
+    r"(?P<conj>(?:y|pero)\s+)?"
+    r"(?P<m>(?:" + _MARCADORES_COMA + r")\s*,|(?:" + _MARCADORES_PUNTO + r")\s*\.)\s*",
+    re.IGNORECASE,
+)
+
+# Muletilla de cierre: "..., ¿no?" -> "..."
+_COLA_NO = re.compile(r",\s*¿no\?", re.IGNORECASE)
+
+# Palabras funcionales que, repetidas seguidas, son tartamudeo ("que que", "el el").
+# No incluye "sí", "no", "ya", "muy"... que se repiten con sentido.
+_FUNCIONALES = (r"que|el|la|los|las|un|una|de|del|en|y|a|se|lo|es|este|esta|con|por|para|"
+                r"mi|su|me|te|al|como|si|más")
+_REPETIDA = re.compile(r"(?<!\w)(" + _FUNCIONALES + r")(?:[\s,]+\1)+(?!\w)", re.IGNORECASE)
+
+
+def _mayuscula_inicial(m: re.Match) -> str:
+    return m.group(0)[:-1] + m.group(0)[-1].upper()
+
+
+def limpiar_texto_con_registro(texto: str):
+    """Limpia el texto y devuelve (texto_limpio, borrados).
+
+    borrados: lista de {"tipo", "borrado", "contexto"} para revisar falsos positivos.
+    """
+    borrados = []
+
+    def anotar(tipo, m, texto_completo):
+        borrados.append({"tipo": tipo, "borrado": m.group(0).strip(" ,.")
+                         if tipo != "repetida" else m.group(0),
+                         "contexto": texto_completo[max(0, m.start() - 30):m.end() + 30].replace("\n", " ")})
+
+    # 1. Interjecciones
+    original = texto
+    for m in _INTERJECCION.finditer(original):
+        anotar("interjección", m, original)
+    texto = _INTERJECCION.sub("", texto)
+
+    # 2. Marcadores aislados. Se repite hasta que no cambie ("Bueno, o sea, ...").
+    cambio = True
+    while cambio:
+        cambio = False
+        m = _MARCADOR.search(texto)
+        if m:
+            anotar("marcador", m, texto)
+            pre = m.group("pre").strip() if m.group("pre") else ""
+            conj = m.group("conj") or ""
+            resto = texto[m.end():]
+            # Tras fin de oración o inicio, la palabra siguiente pasa a mayúscula
+            if (pre in {"", ".", "!", "?", "…"}) and not conj and resto:
+                resto = resto[0].upper() + resto[1:]
+            separador = (m.group("pre") or "") if not (m.group("pre") or "").isspace() else " "
+            texto = texto[:m.start()] + separador + conj + resto
+            cambio = True
+
+    # 3. "..., ¿no?"
+    for m in _COLA_NO.finditer(texto):
+        anotar("cola ¿no?", m, texto)
+    texto = _COLA_NO.sub(".", texto)
+
+    # 4. Palabras funcionales repetidas
+    for m in _REPETIDA.finditer(texto):
+        anotar("repetida", m, texto)
+    texto = _REPETIDA.sub(lambda m: m.group(1), texto)
+
+    return _normalizar_signos(texto), borrados
+
+
+def _normalizar_signos(texto: str) -> str:
+    """Espacios y signos: sin dobles espacios ni espacio antes de la puntuación,
+    un espacio después, sin signos duplicados. Conserva la puntuación original."""
+    texto = re.sub(r"\s+", " ", texto)
+    texto = re.sub(r"\s+([,.;:!?…])", r"\1", texto)           # sin espacio antes
+    texto = re.sub(r",(\s*,)+", ",", texto)                   # ", ," -> ","
+    texto = re.sub(r"([.!?])(\s*\.)+(?!\.)", r"\1", texto)    # ". ." -> "."
+    texto = re.sub(r"(?<=\d)\s*:\s*(?=\d)", ":", texto)       # horas 6 : 20 -> 6:20
+    texto = re.sub(r"([,;])(?=[^\s\d])", r"\1 ", texto)       # espacio tras coma
+    texto = re.sub(r"(?<![A-ZÁÉÍÓÚÑ])([.!?])(?=[A-ZÁÉÍÓÚÑ¿¡])", r"\1 ", texto)
+    texto = re.sub(r"¿\s+", "¿", texto)
+    texto = re.sub(r"¡\s+", "¡", texto)
+    texto = re.sub(r"^[\s,;.]+", "", texto)                   # sin signos al inicio
+    return texto.strip()
+
+
+def limpiar_texto(texto: str) -> str:
+    """Texto limpio para análisis: sin muletillas claras y con signos normalizados."""
+    return limpiar_texto_con_registro(texto)[0]
+
+
+def tokenizar(texto: str) -> list:
+    """Palabras del texto (minúsculas, sin puntuación)."""
+    return [p.lower() for p in _PALABRA.findall(texto)]
+
+
+def _cargar_spacy():
+    """es_core_news_md completo (parser para oraciones, NER para entidades)."""
+    if "oraciones" not in _spacy:
+        import spacy
+        _spacy["oraciones"] = spacy.load("es_core_news_md")
+        _spacy["oraciones"].max_length = 2_000_000
+    return _spacy["oraciones"]
+
+
+def segmentar_oraciones(texto: str) -> list:
+    """Divide el texto en oraciones con spaCy (es_core_news_md)."""
+    doc = _cargar_spacy()(texto)
+    return [o.text.strip() for o in doc.sents if o.text.strip()]
+
+
+def preparar_textos(resultado, glosario=None, variantes=None) -> dict:
+    """De una transcripción (con reparación) a los textos del sistema.
+
+    - "fiel": lo que se entrega como transcripción (con nombres corregidos).
+    - "limpio": para análisis (sin muletillas); nunca se entrega como transcripción.
+    - "oraciones": el texto limpio dividido en oraciones.
+    - "borrados": lo que se quitó, para revisión.
+    """
+    fiel = corregir_nombres(resultado["texto"], glosario, variantes)
+    limpio, borrados = limpiar_texto_con_registro(fiel)
+    return {"fiel": fiel, "limpio": limpio,
+            "oraciones": segmentar_oraciones(limpio), "borrados": borrados}
