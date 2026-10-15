@@ -190,14 +190,17 @@ Si hay retraso: priorizar que el flujo completo funcione con TextRank antes de p
 
 > Lee PLAN.md. Empecemos por el Día 1: crea la estructura de carpetas, el `.gitignore` y `requirements.txt`, e implementa `src/audio.py` y `src/transcripcion.py`. Prueba con un fragmento de 2 minutos de `data/videos/reunion_1` y muéstrame la transcripción.
 
-## 11. Estado y decisiones (actualizado tras el Día 4, con verificación de fidelidad)
+## 11. Estado y decisiones (actualizado tras el Día 5)
 
 ### Hecho
 - **Día 1:** estructura, `src/audio.py`, `src/transcripcion.py` (Whisper), prueba con fragmento de 2 min.
 - **Día 2:** las 3 reuniones transcritas y guardadas; `src/texto.py` (corrección con glosario/variantes, limpieza de muletillas, oraciones); `src/nlp.py` con entidades y fechas; `tests/test_texto.py` (7 tests `unittest`: `python -m unittest`).
 - **Día 3:** `extraer_palabras_clave()` y `extraer_temas()` (KeyBERT, `paraphrase-multilingual-MiniLM-L12-v2`).
 - **Día 4:** `src/resumen.py` (mT5 map-reduce, TextRank, `resumir()`, `verificar_alucinaciones()`, `medir()`) y ROUGE con tokenizador propio en `src/evaluacion.py` (`tests/test_evaluacion.py`; 11 tests en total).
-- **Siguiente:** Día 5. No iniciado; se espera confirmación.
+- **Día 5:** `src/salidas.py` (metadatos, `guardar_txt`, `generar_pdf` con fpdf2 y Arial de `C:\Windows\Fonts`), `src/pipeline.py` (`procesar()` con progreso y tiempos por etapa; reutiliza `data/transcripciones` si ya existe la transcripción) y `app.py` (Gradio 6.30.0, 127.0.0.1). Salidas en `resultados/`. Lanzar: `C:envs
+lp-audio\Scripts\python.exe app.py` y abrir http://127.0.0.1:7860.
+- **Prueba de punta a punta desde la interfaz** (recorte de 2:30 de reunion_3, glosario "PERUMEC, ASME", TextRank): generó `.txt` y `.pdf` (1 página, tildes y ñ bien). Tiempo total 49.9 s en el pipeline (audio 2.6, transcripción 31.9, limpieza 1.5, palabras clave y temas 12.9, entidades 0.1, resumen 0.8, salidas 0.1); 52.6 s medidos por el cliente.
+- **Siguiente:** Día 6. No iniciado; se espera confirmación.
 
 ### Decisiones clave
 - **Whisper `medium` + glosario opcional.** `medium` baja el WER frente a `small`, y el `initial_prompt` con glosario lo baja más. Sin glosario no se usa prompt; el sistema no trae términos por defecto (ejemplo en `config/ejemplos/caso_reuniones/`).
@@ -284,6 +287,9 @@ Solo hay un fragmento de referencia (2 min), así que la diferencia entre config
 - **Fragmento de referencia de reunion_3:** transcribir a mano 2-3 min para un segundo WER (hoy solo hay de reunion_1).
 
 ### Limitaciones conocidas (se suman a la sección 8)
+- En textos cortos (como el recorte de 2:30, 312 palabras) el resumen TextRank es casi la transcripción: el objetivo de 150-300 palabras no se adapta al largo de la entrada.
+- La caché de transcripción se indexa por el nombre del archivo: dos archivos distintos con el mismo nombre reutilizarían la misma transcripción.
+- El PDF depende de que exista Arial en `C:\Windows\Fonts` (solo Windows). No se probó la interfaz con archivos largos ni con el modo mT5 ni con reducción de ruido desde la interfaz.
 - El resumen extractivo (TextRank) suena "hablado": son oraciones literales de la conversación, con su desorden y primera persona.
 - El ROUGE se midió con una sola referencia y sobre reunion_3, la misma reunión usada para ajustar mT5 (configuraciones y bloques); es orientativo y optimista para mT5.
 - La verificación solo detecta nombres, números y fechas; mT5 puede seguir diciendo cosas falsas sin ellos, y ~40 % de los bloques acaban siendo oraciones TextRank.
