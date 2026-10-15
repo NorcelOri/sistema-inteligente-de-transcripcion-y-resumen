@@ -190,13 +190,14 @@ Si hay retraso: priorizar que el flujo completo funcione con TextRank antes de p
 
 > Lee PLAN.md. Empecemos por el Día 1: crea la estructura de carpetas, el `.gitignore` y `requirements.txt`, e implementa `src/audio.py` y `src/transcripcion.py`. Prueba con un fragmento de 2 minutos de `data/videos/reunion_1` y muéstrame la transcripción.
 
-## 11. Estado y decisiones (actualizado tras el Día 3)
+## 11. Estado y decisiones (actualizado tras el Día 4)
 
 ### Hecho
 - **Día 1:** estructura, `src/audio.py`, `src/transcripcion.py` (Whisper), prueba con fragmento de 2 min.
 - **Día 2:** las 3 reuniones transcritas y guardadas; `src/texto.py` (corrección con glosario/variantes, limpieza de muletillas, oraciones); `src/nlp.py` con entidades y fechas; `tests/test_texto.py` (7 tests `unittest`: `python -m unittest`).
 - **Día 3:** `extraer_palabras_clave()` y `extraer_temas()` (KeyBERT, `paraphrase-multilingual-MiniLM-L12-v2`).
-- **Siguiente:** Día 4 (`src/resumen.py`). No iniciado; se espera confirmación.
+- **Día 4:** `src/resumen.py` (mT5 map-reduce, TextRank, `resumir()`, `verificar_alucinaciones()`, `medir()`) y ROUGE con tokenizador propio en `src/evaluacion.py` (`tests/test_evaluacion.py`; 11 tests en total).
+- **Siguiente:** Día 5. No iniciado; se espera confirmación.
 
 ### Decisiones clave
 - **Whisper `medium` + glosario opcional.** `medium` baja el WER frente a `small`, y el `initial_prompt` con glosario lo baja más. Sin glosario no se usa prompt; el sistema no trae términos por defecto (ejemplo en `config/ejemplos/caso_reuniones/`).
@@ -206,7 +207,21 @@ Si hay retraso: priorizar que el flujo completo funcione con TextRank antes de p
 - **Fechas:** absolutas (incluye el día del mes, "el 23") y relativas; se unifican variantes y se descartan las débiles ("el mes", "este año").
 - **Palabras clave: sintagmas nominales de spaCy** como candidatas de KeyBERT (ngramas 1-2, MMR 0.5, stopwords en español), con filtros de ruido: mínimo 2 apariciones, sin palabras de discurso (gracias, momento, vez…), solo palabras del vocabulario español, PROPN o términos del glosario.
 
+- **Resumen mT5:** `AutoTokenizer` + `AutoModelForSeq2SeqLM` directos, bf16 (en la RTX 5070 bf16, fp16 y fp32 dieron la misma salida en un bloque de prueba; se deja bf16 con reintento en fp32 si la salida sale vacía), `WHITESPACE_HANDLER`, entrada 512, beams 4, `no_repeat_ngram_size` 2, salida máx. 84 tokens por bloque, bloques de ~350 tokens por oraciones. Reduce: si la unión pasa de 300 palabras se resume otra vez; si queda bajo 150 o no se achica, se conserva el nivel anterior y se poda quitando los parciales más cortos. Se descartan los parciales tipo titular ("¿Qué tienen en común X y Y?").
+- **mT5 XL-Sum está entrenado con noticias de la BBC:** inventa nombres, cargos y hechos (BBC Mundo, Barack Obama, Mundial de Fútbol). `verificar_alucinaciones()` lo detecta; el resumen mT5 no es fiel. TextRank es extractivo y no inventa, pero es menos coherente al leerse.
+
 ### Resultados medidos
+**Resumen, configuraciones mT5 probadas en reunion_3 (7):** A base sin filtrar preguntas; **B filtra titulares (elegida)**; C B + prohibir "BBC"/"Mundo" (solo desplaza la invención: "Mundial de Fútbol"); D C + salida 128/min 30 (más largo, peor); E C + bloques 450 (más inventado: Massachusetts, "visita a su casa"); F bloques 250 (289 palabras, mucho invento); G salida 60 (idéntica a B). Se eligió por coherencia, fidelidad y largo; ROUGE solo confirmó.
+
+| Resumen | Reunión 1 | Reunión 2 | Reunión 3 |
+|---|---|---|---|
+| mT5: palabras / tiempo | 268 / 27.3 s | 152 / 8.7 s | 200 / 10.1 s |
+| TextRank: palabras / tiempo | 276 / 5.3 s | 285 / 3.2 s | 296 / 1.1 s |
+
+ROUGE F1 vs. referencia escrita de reunion_3 (idéntico con y sin tildes): mT5 R1 0.311, R2 0.054, RL 0.162; TextRank R1 0.344, R2 0.078, RL 0.196.
+
+**Precisión de entidades:** reunion_3 TOTAL 0.600 (LOC 0.667, ORG 0.571, PER 0.571); reunion_1 TOTAL 0.417 (LOC 0.111, ORG 0.625, PER 0.571).
+
 **WER** (fragmento de 2 min de reunion_1, referencia manual `data/referencia/reunion_1_300s_120s_referencia.txt`):
 
 | Configuración | WER | WER sin tildes |
@@ -239,9 +254,7 @@ Solo hay un fragmento de referencia (2 min), así que la diferencia entre config
 **Entidades** (top, con glosario): ver CSV de revisión abajo. Con glosario aparecen `partners` y suben ASME/PERUMEC, que spaCy solo no detecta bien. Solo hubo una fusión por similitud (Steve→Steven). Entre las 3 reuniones aparecen decenas de entidades, con errores de etiqueta de spaCy.
 
 ### Pendientes (del autor)
-- **Llenar con s/n la columna `correcta`** de `data/referencia/entidades_reunion_1.csv` y `entidades_reunion_3.csv`; luego `evaluar_precision_entidades(csv)` (en `src/evaluacion.py`) da la precisión por tipo. No se versionan (`data/` está ignorado).
 - **Fragmento de referencia de reunion_3:** transcribir a mano 2-3 min para un segundo WER (hoy solo hay de reunion_1).
-- ROUGE: resumen de referencia a mano de un video (Día 6).
 
 ### Limitaciones conocidas (se suman a la sección 8)
 - Las palabras clave son sobre todo palabras sueltas (spaCy da pocos bigramas), y aún se cuelan algunas ("hazme") y nombres mal etiquetados por spaCy (p. ej. "cybermeg").

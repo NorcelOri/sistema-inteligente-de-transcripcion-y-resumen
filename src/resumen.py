@@ -44,16 +44,25 @@ def cargar_mt5(dtype=None):
     return _modelo["tokenizer"], _modelo["modelo"], _modelo["dispositivo"]
 
 
-def _resumir_bloque(texto: str, max_salida=MAX_SALIDA, min_salida=MIN_SALIDA, dtype=None) -> str:
-    """Resumen mT5 de un bloque (con el WHITESPACE_HANDLER de la ficha del modelo)."""
+def _resumir_bloque(texto: str, max_salida=MAX_SALIDA, min_salida=MIN_SALIDA, dtype=None,
+                    prohibidas=()) -> str:
+    """Resumen mT5 de un bloque (con el WHITESPACE_HANDLER de la ficha del modelo).
+    `prohibidas`: palabras que el modelo no puede generar (bad_words_ids)."""
     import torch
     tokenizer, modelo, dispositivo = cargar_mt5(dtype)
     entrada = tokenizer(WHITESPACE_HANDLER(texto), return_tensors="pt",
                         truncation=True, max_length=MAX_ENTRADA).to(dispositivo)
+    prohibidas_ids = [tokenizer(v, add_special_tokens=False).input_ids
+                      for w in prohibidas for v in (w, " " + w)] or None
     with torch.no_grad():
         salida = modelo.generate(**entrada, max_length=max_salida, min_length=min_salida,
-                                 num_beams=NUM_BEAMS, no_repeat_ngram_size=NO_REPETIR_NGRAMA)
-    return tokenizer.decode(salida[0], skip_special_tokens=True, clean_up_tokenization_spaces=False).strip()
+                                 num_beams=NUM_BEAMS, no_repeat_ngram_size=NO_REPETIR_NGRAMA,
+                                 bad_words_ids=prohibidas_ids)
+    resumen = tokenizer.decode(salida[0], skip_special_tokens=True, clean_up_tokenization_spaces=False).strip()
+    if not resumen and _modelo["dtype"] != torch.float32:
+        # Salida vacía = inestabilidad numérica (típica de mT5 en fp16): se repite en fp32
+        return _resumir_bloque(texto, max_salida, min_salida, torch.float32, prohibidas)
+    return resumen
 
 
 def dividir_bloques(texto: str, tokens_bloque=TOKENS_BLOQUE) -> list:
@@ -77,24 +86,38 @@ def contar_palabras(texto: str) -> int:
     return len(texto.split())
 
 
+def _es_titular(parcial: str) -> bool:
+    """Pregunta corta tipo titular ("¿Qué tienen en común X y Y?"): ruido típico de XL-Sum."""
+    return parcial.rstrip().endswith("?") and contar_palabras(parcial) < 12
+
+
 def resumir_mt5(texto: str, objetivo=OBJETIVO_PALABRAS, tokens_bloque=TOKENS_BLOQUE,
-                max_salida=MAX_SALIDA, min_salida=MIN_SALIDA, dtype=None, registro=None) -> str:
+                max_salida=MAX_SALIDA, min_salida=MIN_SALIDA, dtype=None, registro=None,
+                descartar_preguntas=True, prohibidas=()) -> str:
     """Map-reduce con mT5. `registro` (dict opcional) recibe "parciales" (nivel 1)
-    y "niveles" (lista con los resúmenes de cada nivel de reducción)."""
+    y "niveles" (lista con los resúmenes de cada nivel de reducción).
+
+    Reduce: si la unión pasa del máximo, se resume otra vez; si eso la deja por
+    debajo del mínimo (sobrecompresión) o no la achica, se conserva el nivel
+    anterior y se poda quitando los parciales más cortos hasta entrar en el rango.
+    """
     registro = registro if registro is not None else {}
-    parciales = [_resumir_bloque(b, max_salida, min_salida, dtype) for b in dividir_bloques(texto, tokens_bloque)]
+    resumir_b = lambda b: _resumir_bloque(b, max_salida, min_salida, dtype, prohibidas)
+    parciales = [resumir_b(b) for b in dividir_bloques(texto, tokens_bloque)]
     registro["parciales"] = parciales
     registro["niveles"] = []
-    union = " ".join(parciales)
-    # Reduce: mientras la unión pase del máximo y siga achicándose, se resume otra vez
-    while contar_palabras(union) > objetivo[1] and len(registro["niveles"]) < 3:
-        nuevos = [_resumir_bloque(b, max_salida, min_salida, dtype) for b in dividir_bloques(union, tokens_bloque)]
+    actual = [p for p in parciales if p and not (descartar_preguntas and _es_titular(p))]
+    union = lambda lista: " ".join(lista)
+    while contar_palabras(union(actual)) > objetivo[1] and len(registro["niveles"]) < 3:
+        nuevos = [resumir_b(b) for b in dividir_bloques(union(actual), tokens_bloque)]
         registro["niveles"].append(nuevos)
-        nueva_union = " ".join(nuevos)
-        if contar_palabras(nueva_union) >= contar_palabras(union):
+        if not (objetivo[0] <= contar_palabras(union(nuevos)) < contar_palabras(union(actual))):
             break
-        union = nueva_union
-    return union
+        actual = nuevos
+    # Poda: quita los parciales más cortos (menos información) conservando el orden
+    while contar_palabras(union(actual)) > objetivo[1] and len(actual) > 1:
+        actual.remove(min(actual, key=contar_palabras))
+    return union(actual)
 
 
 def oraciones_para_objetivo(texto: str, objetivo=OBJETIVO_PALABRAS) -> int:
