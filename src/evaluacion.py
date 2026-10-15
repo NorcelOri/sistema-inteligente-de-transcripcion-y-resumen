@@ -85,11 +85,12 @@ def rouge(referencia: str, resumen: str) -> dict:
     return resultado
 
 
-def evaluar_precision_entidades(ruta_csv) -> dict:
+def evaluar_precision_entidades(ruta_csv, min_frecuencia=1) -> dict:
     """Precisión de las entidades por tipo, desde el CSV revisado a mano.
 
     El CSV tiene las columnas entidad, tipo, frecuencia, correcta (s/n).
     Precisión = entidades marcadas "s" / entidades revisadas, por tipo y en total.
+    Solo cuentan las entidades con frecuencia >= min_frecuencia.
     Si falta alguna marca, lanza ValueError (el CSV aún no está completo).
     """
     import csv
@@ -101,7 +102,7 @@ def evaluar_precision_entidades(ruta_csv) -> dict:
         contenido = crudo.decode("cp1252")
     delimitador = ";" if contenido.splitlines()[0].count(";") > contenido.splitlines()[0].count(",") else ","
     filas = [f for f in csv.DictReader(contenido.splitlines(), delimiter=delimitador)
-             if (f.get("entidad") or "").strip()]
+             if (f.get("entidad") or "").strip() and int(f["frecuencia"]) >= min_frecuencia]
     marcas = {"s": True, "si": True, "sí": True, "n": False, "no": False}
     vacias = [f["entidad"] for f in filas if f["correcta"].strip().lower() not in marcas]
     if vacias:

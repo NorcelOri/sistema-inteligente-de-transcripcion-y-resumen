@@ -12,7 +12,7 @@ from src.evaluacion import normalizar
 
 MODELO = "csebuetnlp/mT5_multilingual_XLSum"
 OBJETIVO_PALABRAS = (150, 300)
-TOKENS_BLOQUE = 350          # tamaño de cada bloque de entrada (el modelo admite 512)
+TOKENS_BLOQUE = 250          # tamaño de cada bloque de entrada (el modelo admite 512); 250 fue el único que dejó las 3 reuniones en 150-300 palabras con verificación
 MAX_ENTRADA = 512
 NUM_BEAMS = 4
 NO_REPETIR_NGRAMA = 2
@@ -86,6 +86,21 @@ def contar_palabras(texto: str) -> int:
     return len(texto.split())
 
 
+def _mejor_oracion(bloque: str) -> str:
+    """La oración mejor puntuada por TextRank dentro del bloque."""
+    from sumy.nlp.stemmers import Stemmer
+    from sumy.nlp.tokenizers import Tokenizer
+    from sumy.parsers.plaintext import PlaintextParser
+    from sumy.summarizers.text_rank import TextRankSummarizer
+    from sumy.utils import get_stop_words
+    documento = PlaintextParser.from_string(bloque, Tokenizer("spanish")).document
+    if len(documento.sentences) <= 1:
+        return bloque.strip()
+    resumidor = TextRankSummarizer(Stemmer("spanish"))
+    resumidor.stop_words = get_stop_words("spanish")
+    return str(resumidor(documento, 1)[0])
+
+
 def _es_titular(parcial: str) -> bool:
     """Pregunta corta tipo titular ("¿Qué tienen en común X y Y?"): ruido típico de XL-Sum."""
     return parcial.rstrip().endswith("?") and contar_palabras(parcial) < 12
@@ -93,8 +108,14 @@ def _es_titular(parcial: str) -> bool:
 
 def resumir_mt5(texto: str, objetivo=OBJETIVO_PALABRAS, tokens_bloque=TOKENS_BLOQUE,
                 max_salida=MAX_SALIDA, min_salida=MIN_SALIDA, dtype=None, registro=None,
-                descartar_preguntas=True, prohibidas=()) -> str:
-    """Map-reduce con mT5. `registro` (dict opcional) recibe "parciales" (nivel 1)
+                descartar_preguntas=True, prohibidas=(), verificar=True) -> str:
+    """Map-reduce con mT5 (con verificación de fidelidad por defecto; ver PLAN.md).
+
+    verificar=True (por defecto): cada parcial se compara con su bloque; si trae nombres propios,
+    números o fechas que el bloque no tiene, se reemplaza por la mejor oración de
+    TextRank de ese bloque (un solo intento). `registro` recibe "bloques" y
+    "sustituidos" (nivel 1).
+ `registro` (dict opcional) recibe "parciales" (nivel 1)
     y "niveles" (lista con los resúmenes de cada nivel de reducción).
 
     Reduce: si la unión pasa del máximo, se resume otra vez; si eso la deja por
@@ -102,8 +123,17 @@ def resumir_mt5(texto: str, objetivo=OBJETIVO_PALABRAS, tokens_bloque=TOKENS_BLO
     anterior y se poda quitando los parciales más cortos hasta entrar en el rango.
     """
     registro = registro if registro is not None else {}
-    resumir_b = lambda b: _resumir_bloque(b, max_salida, min_salida, dtype, prohibidas)
-    parciales = [resumir_b(b) for b in dividir_bloques(texto, tokens_bloque)]
+    def resumir_b(b, nivel1=False):
+        p = _resumir_bloque(b, max_salida, min_salida, dtype, prohibidas)
+        if verificar and (not p or any(verificar_alucinaciones(p, b).values())):
+            p = _mejor_oracion(b)
+            if nivel1:
+                registro["sustituidos"] += 1
+        return p
+
+    bloques = dividir_bloques(texto, tokens_bloque)
+    registro["bloques"], registro["sustituidos"] = len(bloques), 0
+    parciales = [resumir_b(b, True) for b in bloques]
     registro["parciales"] = parciales
     registro["niveles"] = []
     actual = [p for p in parciales if p and not (descartar_preguntas and _es_titular(p))]
@@ -164,8 +194,8 @@ def resumir_textrank(texto: str, n_oraciones: int = None, objetivo=OBJETIVO_PALA
     return resumen
 
 
-def resumir(texto: str, metodo: str = "mt5", **kwargs) -> str:
-    """Resume el texto con "mt5" (map-reduce) o "textrank"."""
+def resumir(texto: str, metodo: str = "textrank", **kwargs) -> str:
+    """Resume el texto con "textrank" (por defecto) o "mt5" (map-reduce; inventa datos, ver PLAN.md)."""
     if metodo == "mt5":
         return resumir_mt5(texto, **kwargs)
     if metodo == "textrank":

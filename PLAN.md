@@ -190,7 +190,7 @@ Si hay retraso: priorizar que el flujo completo funcione con TextRank antes de p
 
 > Lee PLAN.md. Empecemos por el Día 1: crea la estructura de carpetas, el `.gitignore` y `requirements.txt`, e implementa `src/audio.py` y `src/transcripcion.py`. Prueba con un fragmento de 2 minutos de `data/videos/reunion_1` y muéstrame la transcripción.
 
-## 11. Estado y decisiones (actualizado tras el Día 4)
+## 11. Estado y decisiones (actualizado tras el Día 4, con verificación de fidelidad)
 
 ### Hecho
 - **Día 1:** estructura, `src/audio.py`, `src/transcripcion.py` (Whisper), prueba con fragmento de 2 min.
@@ -207,10 +207,37 @@ Si hay retraso: priorizar que el flujo completo funcione con TextRank antes de p
 - **Fechas:** absolutas (incluye el día del mes, "el 23") y relativas; se unifican variantes y se descartan las débiles ("el mes", "este año").
 - **Palabras clave: sintagmas nominales de spaCy** como candidatas de KeyBERT (ngramas 1-2, MMR 0.5, stopwords en español), con filtros de ruido: mínimo 2 apariciones, sin palabras de discurso (gracias, momento, vez…), solo palabras del vocabulario español, PROPN o términos del glosario.
 
+- **`resumir()` usa TextRank por defecto**; mT5 es opcional (`metodo="mt5"`) y lleva verificación de fidelidad: cada parcial se compara con su bloque y, si trae nombres, números o fechas ausentes en él, se reemplaza por la mejor oración TextRank de ese bloque (un solo intento). Bloques de 250 tokens.
 - **Resumen mT5:** `AutoTokenizer` + `AutoModelForSeq2SeqLM` directos, bf16 (en la RTX 5070 bf16, fp16 y fp32 dieron la misma salida en un bloque de prueba; se deja bf16 con reintento en fp32 si la salida sale vacía), `WHITESPACE_HANDLER`, entrada 512, beams 4, `no_repeat_ngram_size` 2, salida máx. 84 tokens por bloque, bloques de ~350 tokens por oraciones. Reduce: si la unión pasa de 300 palabras se resume otra vez; si queda bajo 150 o no se achica, se conserva el nivel anterior y se poda quitando los parciales más cortos. Se descartan los parciales tipo titular ("¿Qué tienen en común X y Y?").
 - **mT5 XL-Sum está entrenado con noticias de la BBC:** inventa nombres, cargos y hechos (BBC Mundo, Barack Obama, Mundial de Fútbol). `verificar_alucinaciones()` lo detecta; el resumen mT5 no es fiel. TextRank es extractivo y no inventa, pero es menos coherente al leerse.
 
 ### Resultados medidos
+**mT5 con verificación de fidelidad (3 configuraciones, solo cambia el tamaño de bloque):** invenciones restantes = 0 en las 3 reuniones y las 3 configuraciones (verificadas contra la transcripción completa), así que no se marca como experimental. Elegida V2 (250), la única con las 3 reuniones en 150-300 palabras.
+
+| Config | Sustituidos r1 / r2 / r3 | Palabras r1 / r2 / r3 | Tiempo r1 / r2 / r3 | ROUGE F1 r3 (R1 / R2 / RL) |
+|---|---|---|---|---|
+| V1 bloques 350 | 44 % / 36 % / 27 % | 295 / 109 / 269 | 35.3 / 8.9 / 10.8 s | 0.320 / 0.051 / 0.164 |
+| **V2 bloques 250** | 40 % / 73 % / 38 % | 287 / 180 / 288 | 26.2 / 17.5 / 20.0 s | 0.338 / 0.049 / 0.162 |
+| V3 bloques 450 | 43 % / 67 % / 44 % | 270 / 99 / 241 | 14.0 / 9.1 / 9.3 s | 0.334 / 0.050 / 0.173 |
+
+Sin verificación, mT5 inventaba nombres/cifras/fechas en las 3 reuniones (ver abajo). TextRank (referencia): ROUGE F1 r3 0.344 / 0.078 / 0.196.
+
+**Precisión de entidades, frecuencia ≥ 2 vs. total** (desde los CSV marcados; extractor sin cambios):
+
+| Reunión | Tipo | Total | Frecuencia ≥ 2 |
+|---|---|---|---|
+| 1 | LOC | 0.111 (9) | 0.500 (1/2) |
+| 1 | ORG | 0.625 (8) | 0.750 (3/4) |
+| 1 | PER | 0.571 (7) | 1.000 (2/2) |
+| 1 | TOTAL | 0.417 (24) | 0.750 (6/8) |
+| 3 | LOC | 0.667 (6) | 1.000 (1/1) |
+| 3 | ORG | 0.571 (7) | 1.000 (3/3) |
+| 3 | PER | 0.571 (7) | 1.000 (3/3) |
+| 3 | TOTAL | 0.600 (20) | 1.000 (7/7) |
+
+Con frecuencia ≥ 2 quedan muy pocas entidades (8 y 7), así que la mejora es orientativa.
+
+**Invenciones de mT5 sin verificación (nombres / números / fechas), por reunión:** r1: 23 nombres (Barack Obama, BBC Mundo, Nueva York…), 1 número (1.000), 3 fechas; r2: 8 nombres (BBC, Juegos Olímpicos, FARC…), 1 fecha; r3: 7 nombres (BBC Mundo, Stanford…).
 **Resumen, configuraciones mT5 probadas en reunion_3 (7):** A base sin filtrar preguntas; **B filtra titulares (elegida)**; C B + prohibir "BBC"/"Mundo" (solo desplaza la invención: "Mundial de Fútbol"); D C + salida 128/min 30 (más largo, peor); E C + bloques 450 (más inventado: Massachusetts, "visita a su casa"); F bloques 250 (289 palabras, mucho invento); G salida 60 (idéntica a B). Se eligió por coherencia, fidelidad y largo; ROUGE solo confirmó.
 
 | Resumen | Reunión 1 | Reunión 2 | Reunión 3 |
@@ -257,6 +284,9 @@ Solo hay un fragmento de referencia (2 min), así que la diferencia entre config
 - **Fragmento de referencia de reunion_3:** transcribir a mano 2-3 min para un segundo WER (hoy solo hay de reunion_1).
 
 ### Limitaciones conocidas (se suman a la sección 8)
+- El resumen extractivo (TextRank) suena "hablado": son oraciones literales de la conversación, con su desorden y primera persona.
+- El ROUGE se midió con una sola referencia y sobre reunion_3, la misma reunión usada para ajustar mT5 (configuraciones y bloques); es orientativo y optimista para mT5.
+- La verificación solo detecta nombres, números y fechas; mT5 puede seguir diciendo cosas falsas sin ellos, y ~40 % de los bloques acaban siendo oraciones TextRank.
 - Las palabras clave son sobre todo palabras sueltas (spaCy da pocos bigramas), y aún se cuelan algunas ("hazme") y nombres mal etiquetados por spaCy (p. ej. "cybermeg").
 - El NER de spaCy etiqueta mal algunos nombres (organizaciones como PER/LOC); la fusión y el glosario corrigen solo parte.
 - Las variantes de una misma entidad con similitud < 90 (p. ej. "Cyber Mej" / "Cybermeg") no se unen.
