@@ -197,8 +197,7 @@ Si hay retraso: priorizar que el flujo completo funcione con TextRank antes de p
 - **Día 2:** las 3 reuniones transcritas y guardadas; `src/texto.py` (corrección con glosario/variantes, limpieza de muletillas, oraciones); `src/nlp.py` con entidades y fechas; `tests/test_texto.py` (7 tests `unittest`: `python -m unittest`).
 - **Día 3:** `extraer_palabras_clave()` y `extraer_temas()` (KeyBERT, `paraphrase-multilingual-MiniLM-L12-v2`).
 - **Día 4:** `src/resumen.py` (mT5 map-reduce, TextRank, `resumir()`, `verificar_alucinaciones()`, `medir()`) y ROUGE con tokenizador propio en `src/evaluacion.py` (`tests/test_evaluacion.py`; 11 tests en total).
-- **Día 5:** `src/salidas.py` (metadatos, `guardar_txt`, `generar_pdf` con fpdf2 y Arial de `C:\Windows\Fonts`), `src/pipeline.py` (`procesar()` con progreso y tiempos por etapa; reutiliza `data/transcripciones` si ya existe la transcripción) y `app.py` (Gradio 6.30.0, 127.0.0.1). Salidas en `resultados/`. Lanzar: `C:envs
-lp-audio\Scripts\python.exe app.py` y abrir http://127.0.0.1:7860.
+- **Día 5:** `src/salidas.py` (metadatos, `guardar_txt`, `generar_pdf` con fpdf2 y Arial de `C:\Windows\Fonts`), `src/pipeline.py` (`procesar()` con progreso y tiempos por etapa; reutiliza `data/transcripciones` si ya existe la transcripción) y `app.py` (Gradio 6.30.0, 127.0.0.1). Salidas en `resultados/`. Lanzar: `C:\venvs\nlp-audio\Scripts\python.exe app.py` y abrir http://127.0.0.1:7860.
 - **Prueba de punta a punta desde la interfaz** (recorte de 2:30 de reunion_3, glosario "PERUMEC, ASME", TextRank): generó `.txt` y `.pdf` (1 página, tildes y ñ bien). Tiempo total 49.9 s en el pipeline (audio 2.6, transcripción 31.9, limpieza 1.5, palabras clave y temas 12.9, entidades 0.1, resumen 0.8, salidas 0.1); 52.6 s medidos por el cliente.
 - **Siguiente:** Día 6. No iniciado; se espera confirmación.
 
