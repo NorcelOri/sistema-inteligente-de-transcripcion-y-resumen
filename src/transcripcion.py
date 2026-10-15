@@ -7,6 +7,7 @@ Incluye reparación automática de bucles (frases repetidas) y de huecos largos
 sin texto dentro de habla.
 """
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -43,9 +44,10 @@ def construir_prompt(glosario=None):
     return "Vocabulario: " + ", ".join(glosario) + "." if glosario else None
 
 
-def _rutas_cache(ruta_wav, modelo, con_prompt=False):
+def _rutas_cache(ruta_wav, modelo, prompt=None):
     """Rutas del .txt (texto plano) y .json (texto + segmentos) de una transcripción."""
-    sufijo = "_prompt" if con_prompt else ""
+    # La clave incluye el contenido (el nombre del WAV lleva su hash), el modelo y el glosario
+    sufijo = "_prompt_" + hashlib.sha1(prompt.encode("utf-8")).hexdigest()[:8] if prompt else ""
     base = CARPETA_TRANSCRIPCIONES / f"{Path(ruta_wav).stem}_{modelo}{sufijo}"
     return base.with_suffix(".txt"), base.with_suffix(".json")
 
@@ -62,7 +64,7 @@ def transcribir(ruta_wav, idioma="es", modelo="small", usar_cache=True,
     reparar: detecta bucles y huecos largos y re-transcribe esos tramos.
     """
     initial_prompt = construir_prompt(glosario)
-    ruta_txt, ruta_json = _rutas_cache(ruta_wav, modelo, bool(initial_prompt))
+    ruta_txt, ruta_json = _rutas_cache(ruta_wav, modelo, initial_prompt)
     ruta_rep = ruta_json.with_name(ruta_json.stem + "_rep.json")
 
     # Si ya se transcribió antes con este modelo, reutilizar

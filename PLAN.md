@@ -190,7 +190,7 @@ Si hay retraso: priorizar que el flujo completo funcione con TextRank antes de p
 
 > Lee PLAN.md. Empecemos por el Día 1: crea la estructura de carpetas, el `.gitignore` y `requirements.txt`, e implementa `src/audio.py` y `src/transcripcion.py`. Prueba con un fragmento de 2 minutos de `data/videos/reunion_1` y muéstrame la transcripción.
 
-## 11. Estado y decisiones (actualizado tras el Día 5)
+## 11. Estado y decisiones (actualizado tras los arreglos del Día 5)
 
 ### Hecho
 - **Día 1:** estructura, `src/audio.py`, `src/transcripcion.py` (Whisper), prueba con fragmento de 2 min.
@@ -199,6 +199,7 @@ Si hay retraso: priorizar que el flujo completo funcione con TextRank antes de p
 - **Día 4:** `src/resumen.py` (mT5 map-reduce, TextRank, `resumir()`, `verificar_alucinaciones()`, `medir()`) y ROUGE con tokenizador propio en `src/evaluacion.py` (`tests/test_evaluacion.py`; 11 tests en total).
 - **Día 5:** `src/salidas.py` (metadatos, `guardar_txt`, `generar_pdf` con fpdf2 y Arial de `C:\Windows\Fonts`), `src/pipeline.py` (`procesar()` con progreso y tiempos por etapa; reutiliza `data/transcripciones` si ya existe la transcripción) y `app.py` (Gradio 6.30.0, 127.0.0.1). Salidas en `resultados/`. Lanzar: `C:\venvs\nlp-audio\Scripts\python.exe app.py` y abrir http://127.0.0.1:7860.
 - **Prueba de punta a punta desde la interfaz** (recorte de 2:30 de reunion_3, glosario "PERUMEC, ASME", TextRank): generó `.txt` y `.pdf` (1 página, tildes y ñ bien). Tiempo total 49.9 s en el pipeline (audio 2.6, transcripción 31.9, limpieza 1.5, palabras clave y temas 12.9, entidades 0.1, resumen 0.8, salidas 0.1); 52.6 s medidos por el cliente.
+- **Arreglos del Día 5:** resumen proporcional, caché por hash y pruebas desde la interfaz: reunion_3 completa (18:19, TextRank) en 144.0 s en el pipeline (149.4 s medidos por el cliente; audio 1.6, transcripción 125.0, limpieza 2.2, palabras clave y temas 12.3, entidades 0.3, resumen 2.5, salidas 0.1); mT5 con recorte de 2:30 funciona (22.5 s, resumen de 36 palabras).
 - **Siguiente:** Día 6. No iniciado; se espera confirmación.
 
 ### Decisiones clave
@@ -286,14 +287,11 @@ Solo hay un fragmento de referencia (2 min), así que la diferencia entre config
 - **Fragmento de referencia de reunion_3:** transcribir a mano 2-3 min para un segundo WER (hoy solo hay de reunion_1).
 
 ### Limitaciones conocidas (se suman a la sección 8)
-- En textos cortos (como el recorte de 2:30, 312 palabras) el resumen TextRank es casi la transcripción: el objetivo de 150-300 palabras no se adapta al largo de la entrada.
-- La caché de transcripción se indexa por el nombre del archivo: dos archivos distintos con el mismo nombre reutilizarían la misma transcripción.
-- El PDF depende de que exista Arial en `C:\Windows\Fonts` (solo Windows). No se probó la interfaz con archivos largos ni con el modo mT5 ni con reducción de ruido desde la interfaz.
-- El resumen extractivo (TextRank) suena "hablado": son oraciones literales de la conversación, con su desorden y primera persona.
-- El ROUGE se midió con una sola referencia y sobre reunion_3, la misma reunión usada para ajustar mT5 (configuraciones y bloques); es orientativo y optimista para mT5.
-- La verificación solo detecta nombres, números y fechas; mT5 puede seguir diciendo cosas falsas sin ellos, y ~40 % de los bloques acaban siendo oraciones TextRank.
-- Las palabras clave son sobre todo palabras sueltas (spaCy da pocos bigramas), y aún se cuelan algunas ("hazme") y nombres mal etiquetados por spaCy (p. ej. "cybermeg").
-- El NER de spaCy etiqueta mal algunos nombres (organizaciones como PER/LOC); la fusión y el glosario corrigen solo parte.
-- Las variantes de una misma entidad con similitud < 90 (p. ej. "Cyber Mej" / "Cybermeg") no se unen.
-- La limpieza de muletillas es conservadora: solo borra marcadores claramente aislados.
-- El WER se midió sobre un solo fragmento de 2 min.
+- **Largo del resumen proporcional** (`objetivo_para()`): 10-15 % de la entrada, mínimo 60 y máximo 300 palabras (el mínimo no pasa de 150). Con reuniones de ≥ 2000 palabras da 150-300, como antes; con el recorte de 312 palabras da 60-90.
+- **Caché de transcripción por contenido:** el WAV se nombra `<nombre>_<hash SHA-256 del archivo>` y la clave de la caché añade el modelo y un hash del glosario. Las transcripciones antiguas (sin hash) ya no se reutilizan.
+- El PDF requiere Arial de Windows (`C:\Windows\Fonts`).
+- No hay diarización: la transcripción no distingue quién habla.
+- Solo español: el pipeline, el glosario, spaCy (`es_core_news_md`) y las listas de muletillas/fechas están hechos para español, aunque `procesar()` acepta `idioma`.
+- Sin probar desde la interfaz: reducción de ruido y archivos muy largos (> 30 min).
+- Whisper no es determinista: el mismo recorte dio 312 y 226 palabras en dos ejecuciones (sin investigar).
+- El resumen TextRank puede empezar a mitad de frase si la transcripción tiene oraciones cortadas.

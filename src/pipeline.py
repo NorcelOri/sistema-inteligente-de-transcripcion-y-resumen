@@ -36,7 +36,9 @@ def procesar(ruta, idioma="es", glosario=None, metodo="textrank", reducir_ruido=
         progreso(i / len(ETAPAS), ETAPAS[i] + "...")
 
     etapa(0, "audio")
-    wav = audio.extraer_audio(ruta, inicio=inicio, duracion=duracion)
+    # El WAV (y con él la caché de transcripción) se nombra con el hash del contenido, no solo el nombre
+    wav = audio.extraer_audio(ruta, inicio=inicio, duracion=duracion,
+                              nombre=f"{ruta.stem}_{audio.hash_archivo(ruta)}")
     if reducir_ruido:
         wav = audio.reducir_ruido(wav)
     r["duracion_s"] = audio.duracion_segundos(wav)
@@ -62,7 +64,7 @@ def procesar(ruta, idioma="es", glosario=None, metodo="textrank", reducir_ruido=
     r["metodo"] = metodo
 
     etapa(6, "salidas")
-    nombre = wav.stem
+    nombre = ruta.stem
     r["metadatos"] = salidas.calcular_metadatos(r["fiel"], textos["oraciones"], r["duracion_s"])
     r["ruta_txt"] = salidas.guardar_txt(r["fiel"], nombre)
     r["ruta_pdf"] = salidas.generar_pdf(nombre, r["resumen"], r["palabras_clave"], r["temas"],

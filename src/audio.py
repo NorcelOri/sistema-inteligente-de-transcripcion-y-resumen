@@ -36,8 +36,18 @@ def duracion_segundos(ruta) -> float:
     return float(salida.stdout.strip())
 
 
+def hash_archivo(ruta, n=10) -> str:
+    """Primeros n caracteres del SHA-256 del contenido del archivo."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(ruta, "rb") as f:
+        for bloque in iter(lambda: f.read(1 << 20), b""):
+            h.update(bloque)
+    return h.hexdigest()[:n]
+
+
 def extraer_audio(ruta_entrada, carpeta_salida=CARPETA_AUDIOS,
-                  inicio=None, duracion=None) -> Path:
+                  inicio=None, duracion=None, nombre=None) -> Path:
     """Convierte el archivo de entrada a WAV mono 16 kHz.
 
     inicio y duracion (en segundos) son opcionales y permiten extraer
@@ -49,7 +59,7 @@ def extraer_audio(ruta_entrada, carpeta_salida=CARPETA_AUDIOS,
         raise ValueError(f"Formato no soportado o archivo inexistente: {ruta_entrada}")
 
     # Nombre del WAV: si es un fragmento, se indica en el nombre
-    nombre = ruta_entrada.stem
+    nombre = nombre or ruta_entrada.stem
     if inicio is not None or duracion is not None:
         nombre += f"_{int(inicio or 0)}s_{int(duracion or 0)}s"
     carpeta_salida = Path(carpeta_salida)

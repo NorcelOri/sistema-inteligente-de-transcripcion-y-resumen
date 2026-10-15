@@ -11,7 +11,19 @@ import time
 from src.evaluacion import normalizar
 
 MODELO = "csebuetnlp/mT5_multilingual_XLSum"
-OBJETIVO_PALABRAS = (150, 300)
+PALABRAS_MIN, PALABRAS_MAX = 60, 300     # límites absolutos del resumen
+PROPORCION = (0.10, 0.15)                # el resumen mide ~10-15 % de la entrada
+
+
+def objetivo_para(n_palabras: int) -> tuple:
+    """Rango (mín, máx) de palabras del resumen según el largo de la entrada.
+
+    10-15 % de la entrada, con mínimo 60 y máximo 300; el mínimo no pasa de 150.
+    Con reuniones largas (>= 2000 palabras) da 150-300, como antes.
+    """
+    bajo = min(150, max(PALABRAS_MIN, round(PROPORCION[0] * n_palabras)))
+    alto = min(PALABRAS_MAX, max(bajo + 30, round(PROPORCION[1] * n_palabras)))
+    return bajo, alto
 TOKENS_BLOQUE = 250          # tamaño de cada bloque de entrada (el modelo admite 512); 250 fue el único que dejó las 3 reuniones en 150-300 palabras con verificación
 MAX_ENTRADA = 512
 NUM_BEAMS = 4
@@ -106,7 +118,7 @@ def _es_titular(parcial: str) -> bool:
     return parcial.rstrip().endswith("?") and contar_palabras(parcial) < 12
 
 
-def resumir_mt5(texto: str, objetivo=OBJETIVO_PALABRAS, tokens_bloque=TOKENS_BLOQUE,
+def resumir_mt5(texto: str, objetivo=None, tokens_bloque=TOKENS_BLOQUE,
                 max_salida=MAX_SALIDA, min_salida=MIN_SALIDA, dtype=None, registro=None,
                 descartar_preguntas=True, prohibidas=(), verificar=True) -> str:
     """Map-reduce con mT5 (con verificación de fidelidad por defecto; ver PLAN.md).
@@ -123,6 +135,7 @@ def resumir_mt5(texto: str, objetivo=OBJETIVO_PALABRAS, tokens_bloque=TOKENS_BLO
     anterior y se poda quitando los parciales más cortos hasta entrar en el rango.
     """
     registro = registro if registro is not None else {}
+    objetivo = objetivo or objetivo_para(contar_palabras(texto))
     def resumir_b(b, nivel1=False):
         p = _resumir_bloque(b, max_salida, min_salida, dtype, prohibidas)
         if verificar and (not p or any(verificar_alucinaciones(p, b).values())):
@@ -150,7 +163,7 @@ def resumir_mt5(texto: str, objetivo=OBJETIVO_PALABRAS, tokens_bloque=TOKENS_BLO
     return union(actual)
 
 
-def oraciones_para_objetivo(texto: str, objetivo=OBJETIVO_PALABRAS) -> int:
+def oraciones_para_objetivo(texto: str, objetivo) -> int:
     """Cuántas oraciones tomar para quedar en el rango objetivo, según el largo
     medio de las oraciones del texto (apunta a la mitad del rango)."""
     from src.texto import segmentar_oraciones
@@ -159,7 +172,7 @@ def oraciones_para_objetivo(texto: str, objetivo=OBJETIVO_PALABRAS) -> int:
     return max(1, min(len(oraciones), round(sum(objetivo) / 2 / medio)))
 
 
-def resumir_textrank(texto: str, n_oraciones: int = None, objetivo=OBJETIVO_PALABRAS) -> str:
+def resumir_textrank(texto: str, n_oraciones: int = None, objetivo=None) -> str:
     """TextRank (sumy, idioma spanish). Si no se da n_oraciones, se calcula para
     llegar a 150-300 palabras; luego se ajusta si quedó fuera del rango."""
     from sumy.nlp.tokenizers import Tokenizer
@@ -179,6 +192,7 @@ def resumir_textrank(texto: str, n_oraciones: int = None, objetivo=OBJETIVO_PALA
 
     if n_oraciones is not None:
         return extraer(n_oraciones)
+    objetivo = objetivo or objetivo_para(contar_palabras(texto))
     n = oraciones_para_objetivo(texto, objetivo)
     resumen = extraer(n)
     # Ajuste fino: sube o baja de a una oración hasta entrar en el rango
