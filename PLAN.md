@@ -295,3 +295,12 @@ Solo hay un fragmento de referencia (2 min), así que la diferencia entre config
 - Sin probar desde la interfaz: reducción de ruido y archivos muy largos (> 30 min).
 - Whisper no es determinista: el mismo recorte dio 312 y 226 palabras en dos ejecuciones (sin investigar).
 - El resumen TextRank puede empezar a mitad de frase si la transcripción tiene oraciones cortadas.
+- El NER de spaCy sobre habla transcrita es menos preciso que sobre texto escrito.
+- El resumen extractivo (TextRank) suena "hablado": son oraciones literales de la conversación, con su desorden y primera persona.
+- El ROUGE se midió con una sola referencia y sobre reunion_3, la misma reunión usada para ajustar mT5 (configuraciones y bloques); es orientativo y optimista para mT5.
+- La verificación solo detecta nombres, números y fechas; mT5 puede seguir diciendo cosas falsas sin ellos, y ~40 % de los bloques acaban siendo oraciones TextRank.
+- Las palabras clave son sobre todo palabras sueltas (spaCy da pocos bigramas), y aún se cuelan algunas ("hazme") y nombres mal etiquetados por spaCy (p. ej. "cybermeg").
+- El NER de spaCy etiqueta mal algunos nombres (organizaciones como PER/LOC); la fusión y el glosario corrigen solo parte.
+- Las variantes de una misma entidad con similitud < 90 (p. ej. "Cyber Mej" / "Cybermeg") no se unen.
+- La limpieza de muletillas es conservadora: solo borra marcadores claramente aislados.
+- El WER se midió sobre un solo fragmento de 2 min.
